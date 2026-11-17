@@ -2,8 +2,9 @@
 # Written by tools/siteexport/export.mjs in the shop-desk repo. Change it there.
 #
 # Every 15 minutes (and when this file changes, or on demand) it rebuilds
-# index.html from the shop's published site with the current Bolt Badger
-# page design, and commits it only when something changed. Between a publish
+# index.html and the privacy and cookie policies from the shop's published
+# site with the current Bolt Badger page design, and commits only when
+# something changed. A policy keeps its effective date until its wording does. Between a publish
 # and the next run, visitors still get the new content: the page's script
 # updates it in place.
 name: Rebuild the page from Bolt Badger
@@ -45,7 +46,7 @@ jobs:
         run: |
           out="$RUNNER_TEMP/site"
           code=0
-          node .bolt-badger/tools/siteexport/export.mjs "$SITE_SLUG" "$SITE_DOMAIN" "$out" || code=$?
+          node .bolt-badger/tools/siteexport/export.mjs "$SITE_SLUG" "$SITE_DOMAIN" "$out" --policies-from=. || code=$?
           rm -rf .bolt-badger
           if [ "$code" = "3" ]; then
             echo "The website is switched off in Bolt Badger. Leaving the page as it is."
@@ -58,7 +59,11 @@ jobs:
           grep -q "</html>" "$out/index.html"
           test "$(wc -c < "$out/index.html")" -gt 20000
           cp "$out/index.html" index.html
-          git add index.html
+          # the policies follow whichever measurement tags the shop has switched on
+          for f in privacy-policy cookie-policy; do
+            mkdir -p "policies/$f" && cp "$out/policies/$f/index.html" "policies/$f/index.html"
+          done
+          git add index.html policies/privacy-policy/index.html policies/cookie-policy/index.html
           if git diff --cached --quiet; then
             echo "Already up to date."
             exit 0
