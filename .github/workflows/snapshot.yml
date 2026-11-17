@@ -1,0 +1,75 @@
+# Keeps this folder's page in step with what the shop publishes in Bolt Badger.
+# Written by tools/siteexport/export.mjs in the shop-desk repo. Change it there.
+#
+# Every 15 minutes (and when this file changes, or on demand) it rebuilds
+# index.html from the shop's published site with the current Bolt Badger
+# page design, and commits it only when something changed. Between a publish
+# and the next run, visitors still get the new content: the page's script
+# updates it in place.
+name: Rebuild the page from Bolt Badger
+
+on:
+  schedule:
+    - cron: "4,19,34,49 * * * *"
+  workflow_dispatch:
+  repository_dispatch:
+    types: [site-published]
+  push:
+    branches: [main]
+    paths: [".github/workflows/snapshot.yml"]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: snapshot
+  cancel-in-progress: false
+
+env:
+  SITE_SLUG: genie-auto-center
+  SITE_DOMAIN: genieautocenter.com
+  APP_REPO: odaymia/shop-desk
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.APP_REPO }}
+          path: .bolt-badger
+      - name: Rebuild the page
+        run: |
+          out="$RUNNER_TEMP/site"
+          code=0
+          node .bolt-badger/tools/siteexport/export.mjs "$SITE_SLUG" "$SITE_DOMAIN" "$out" || code=$?
+          rm -rf .bolt-badger
+          if [ "$code" = "3" ]; then
+            echo "The website is switched off in Bolt Badger. Leaving the page as it is."
+            exit 0
+          fi
+          if [ "$code" != "0" ]; then exit "$code"; fi
+          set -e
+          # never publish a page that didn't render whole
+          grep -q "<meta name=\"bolt-badger-site\" content=\"$SITE_SLUG\">" "$out/index.html"
+          grep -q "</html>" "$out/index.html"
+          test "$(wc -c < "$out/index.html")" -gt 20000
+          cp "$out/index.html" index.html
+          git add index.html
+          if git diff --cached --quiet; then
+            echo "Already up to date."
+            exit 0
+          fi
+          git config user.name "Bolt Badger"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Page rebuilt from the site published in Bolt Badger"
+          git push
+      # GitHub switches a schedule off after 60 days without repo activity
+      - name: Keep the schedule on
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/snapshot.yml/enable" || true
